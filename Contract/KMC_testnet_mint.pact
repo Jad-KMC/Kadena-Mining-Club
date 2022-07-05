@@ -264,8 +264,8 @@
 
     (defun mint-nft ( account:string guard:guard amount:decimal)
         @doc "Mint an NFT"
-        (enforce (< get-count(MINERS_CREATED_COUNT) MAX_SUPPLY)
-        (enforce (= amount (get-price PRICE_KEY) "All NFTs have been minted")
+        (enforce (< get-count(MINERS_CREATED_COUNT) MAX_SUPPLY))
+        (enforce (= amount (get-price PRICE_KEY) "All NFTs have been minted"))
         (validate-account-id account)
         (enforce (= "k:" (take 2 account)) "Only k: prefixed accounts for security purposes")
         (enforce-coin-account-exists account)
@@ -309,6 +309,7 @@
     (defun get-balance:decimal (id:string account:string)
         @doc "Returns the number of NFTs owned by an account"
         (at 'nfts-held (read mlegder (key id account)))
+    )
 
     (defun get-all-owner-nfts (owner:string)
         @doc "Returns all nfts owned by one address"
