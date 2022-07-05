@@ -1,10 +1,12 @@
 
 (namespace "free")
-
+;; For more information about keysets checkout:
+;; https://pact-language.readthedocs.io/en/latest/pact-reference.html#keysets-and-authorization
 (define-keyset 'KMC-testnet-mint-1212 (read-keyset "KMC-testnet-mint-1212"))
 
 
 (module KMC_testnet_mint 'KMC-testnet-mint-1212
+  @doc "Kadena Mining Club testnet mint contract."
     (use coin)
 
 ; ============================================
@@ -14,8 +16,13 @@
     (defconst ADMIN_KEYSET (read-keyset 'KMC-testnet-mint-1212))
     (defconst ACCOUNTS_CREATED_COUNT "accounts created")
     (defconst MINERS_CREATED_COUNT "miners-count")
-    (defconst WL_PREMIUM_ROLE "wl-premium-role")
-    (defconst WL_SECONDARY_ROLE "wl-secondary-role")
+
+    (defconst WL_KD2_ROLE "wl-kd2-role") ; lets user mint 1 NFT at discounted price
+    (defconst WL_KD5_ROLE "wl-kd5-role") ; lets user mint 2 NFTs at discounted price
+    (defconst WL_KD6_ROLE "wl-kd6-role") ; lets user mint 3 NFTs at discounted price
+    (defconst WL_KD7_ROLE "wl-kd7-role") ; lets user mint 5 NFTs at discounted price
+    (defconst WL_KD8_ROLE "wl-kd8-role") ; lets user mint 10 NFT at discounted price
+
     (defconst PRICE_KEY "price-key")
     (defconst MINERS_URI_KEY "miners-uri-key")
     (defconst ADMIN_ADDRESS "k:ab7cef70e1d91a138b8f65d26d6917ffcb852b84525b7dc2193843e8dfebf799")
@@ -234,8 +241,11 @@
         (enforce
             (
                 or?
-                (= WL_PREMIUM_ROLE)
-                (= WL_SECONDARY_ROLE)
+                (= WL_KD2_ROLE)
+                (= WL_KD5_ROLE)
+                (= WL_KD6_ROLE)
+                (= WL_KD7_ROLE)
+                (= WL_KD8_ROLE)
                 role
             )
             "Must specify a valid role for adding WL members"
@@ -274,7 +284,7 @@
         )
         (coin.transfer account MINT_WALLET amount)
         (write mledger (key (id-for-new-nft) account)
-            { "nfts-held" : (+ nfts-held 1.0)
+            { "nfts-held" : (+ (get-nfts-held account) 1.0)
             , "guard"     : guard
             , "id"        : id-for-new-nft
             , "account"   : account })
@@ -285,6 +295,10 @@
 ; ============================================
 ; ==     NON STATE-MODIFYING FUNCTIONS      ==
 ; ============================================
+
+    (defun get-nfts-held:integer (account:string)
+        (at "nfts-held" (read nft-main-table account ['nfts-held]))
+    )
 
     (defun get-uri:string (nft-id:string)
         @doc "Returns the uri of an NFT"
@@ -308,7 +322,7 @@
 
     (defun get-balance:decimal (id:string account:string)
         @doc "Returns the number of NFTs owned by an account"
-        (at 'nfts-held (read mlegder (key id account)))
+        (at 'nfts-held (read mledger (key id account)))
     )
 
     (defun get-all-owner-nfts (owner:string)
