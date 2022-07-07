@@ -66,7 +66,7 @@
         @doc "Enforces that an account owns the particular miner ID"
         (let
             (
-                (nft-owner (at "owner-address" (read nft-main-table id ["owner-address"])))
+                (nft-owner (at "owner-address" (read mledger id ["owner-address"])))
             )
             (enforce (= nft-owner account) "Account is not owner of the NFT")
                 (compose-capability (ACCOUNT_GUARD account))
@@ -108,29 +108,21 @@
     )
 
     (defschema price-schema
-        price:string
+        price:decimal
     )
 
-    (defschema nft-main-schema
-        id:string
+    ; every entry is one transaction, to be stored on the ledger "mledger"
+    (defschema entry
+        nft-id:string
         generation:integer
-        hashrate-multiplier:decimal
         owner-address:string
         uri:string
-        initialize-hashrate:integer ;;initialize at 0 on mint, which allows admin to set hashrate one time only
+        hashrate-multiplier:decimal
         tied-asic:string
     )
-    ; user accounts ledger schema
-    (defschema account
-        id:string
-        account:string
-        nfts-held:integer
-        guard:guard
-    )
 
-    (deftable nft-main-table:{nft-main-schema})
     (deftable wl:{wl-schema})
-    (deftable mledger:{account})
+    (deftable mledger:{entry})
     (deftable counts-table:{counts-schema})
     (deftable price-table:{price-schema})
 
@@ -138,7 +130,7 @@
         @doc "Initialize the module the first time it is deployed"
         (insert counts-table ACCOUNTS_CREATED_COUNT {"count": 0})
         (insert counts-table MINERS_CREATED_COUNT {"count": 0})
-        (insert price-table PRICE_KEY {"price": "0.001"})
+        (insert price-table PRICE_KEY {"price": 0.001})
     )
 
 ; ============================================
@@ -214,21 +206,22 @@
 ; ==       State-modifying functions        ==
 ; ============================================
 
-    (defun create-account (account:string)
-        @doc "Creates an account"
-        (enforce-coin-account-exists account)
-        (with-capability (ACCOUNT_GUARD account)
-            (let ((id (id-for-new-account)))
-                (insert mledger (key id account)
-                    { "nfts-held" : 0
-                    , "guard"   : (coin-account-guard account)
-                    , "id"      : id
-                    , "account" : account
-                    }
-                )
-                (with-capability (PRIVATE) (increase-count ACCOUNTS_CREATED_COUNT)))
-        )
-    )
+    ; (defun create-account (account:string)
+    ;     @doc "Creates an account"
+
+    ;     (enforce-coin-account-exists account)
+    ;     (with-capability (ACCOUNT_GUARD account)
+    ;         (let ((id (id-for-new-account)))
+    ;             (insert mledger (key id account)
+    ;                 { "nfts-held" : 0
+    ;                 , "guard"   : (coin-account-guard account)
+    ;                 , "id"      : id
+    ;                 , "account" : account
+    ;                 }
+    ;             )
+                ; (with-capability (PRIVATE) (increase-count ACCOUNTS_CREATED_COUNT)))
+    ;     )
+    ; )
 
     (defun increase-count (key:string)
         ;increase the count of a key in a table by 1
@@ -261,34 +254,45 @@
         (insert wl account {"role": role})
     )
 
-    (defun set-asic (id:integer asic-num:string)
-        (update nft-main-table id {"tied-asic": asic-num})
+    (defun set-asic (nft-id:integer asic-num:string)
+        (update mledger nft-id {"tied-asic": asic-num})
     )
 
-    (defun fake-mint (account:string amount:integer)
-        @doc "This simply sends KDA from one account to the Admin_address, test function only"
-        (with-capability (ACCOUNT_GUARD account)
-            (coin.transfer account ADMIN_ADDRESS (* 0.1 amount))
-        )
-    )
+    ; (defun fake-mint (account:string amount:integer)
+    ;     @doc "This simply sends KDA from one account to the Admin_address, test function only"
+    ;     (with-capability (ACCOUNT_GUARD account)
+    ;         (coin.transfer account ADMIN_ADDRESS (* 0.1 amount))
+    ;     )
+    ; )
 
-    (defun mint-nft ( account:string guard:guard amount:decimal)
+    (defun mint-nft ( account:string amount:decimal) ;add guard:guard
         @doc "Mint an NFT"
-        (enforce (< get-count(MINERS_CREATED_COUNT) MAX_SUPPLY))
-        (enforce (= amount (get-price PRICE_KEY) "All NFTs have been minted"))
-        (validate-account-id account)
-        (enforce (= "k:" (take 2 account)) "Only k: prefixed accounts for security purposes")
-        (enforce-coin-account-exists account)
-        (let ((cur_guard (coin-account-guard account)))
-            (enforce (= cur_guard guard) "KMC Account guards must match coin account guards")
+        (with-default-read counts-table MINERS_CREATED_COUNT
+          { 'count: 0.0 }
+          { 'count := current-count }
+
+          (enforce (> MAX_SUPPLY current-count ) (format "current-supply is {}" [current-count]))
         )
-        (coin.transfer account MINT_WALLET amount)
-        (write mledger (key (id-for-new-nft) account)
-            { "nfts-held" : (+ (get-nfts-held account) 1.0)
-            , "guard"     : guard
-            , "id"        : id-for-new-nft
-            , "account"   : account })
-        (increase-count MINERS_CREATED_COUNT)
+        (with-default-read price-table PRICE_KEY
+          { 'price: 0.0 }
+          { 'price := price_1 }
+          (enforce (= amount price_1) "price is incorrect")
+        )
+        (validate-account-id account)
+        (enforce (= "k:" (take 2 account)) "Only k: prefixed accounts for security purposes") ; not necessary with ACCOUNT_GUARD
+        (enforce-coin-account-exists account)
+        ;; (let ((cur_guard (coin-account-guard account)))
+        ;;     (enforce (= cur_guard guard) "KMC Account guards must match coin account guards")
+        ;; )
+        (coin.transfer account ADMIN_ADDRESS amount)
+        (write mledger (key (id-for-new-nft) account) ;this looks like "1:k:a7...x8"
+            { "nft-id"        : (id-for-new-nft)
+            , "generation"    : 1
+            , "owner-address" : account
+            , "uri"           : "PLACEHOLDER" ;implement function to read from IPFS/JSON table
+            , "hashrate-multiplier" : 1.0
+            , "tied-asic"     : "null" }) ;this will be null for all NFTs until ASIC delivery, must be updated by admin
+        (with-capability (PRIVATE) (increase-count MINERS_CREATED_COUNT))
         (format "1 NFT purchased for {} KDA." [amount])
     )
 
@@ -296,13 +300,9 @@
 ; ==     NON STATE-MODIFYING FUNCTIONS      ==
 ; ============================================
 
-    (defun get-nfts-held:integer (account:string)
-        (at "nfts-held" (read nft-main-table account ['nfts-held]))
-    )
-
     (defun get-uri:string (nft-id:string)
         @doc "Returns the uri of an NFT"
-        (at "uri" (read nft-main-table nft-id ['uri] ))
+        (at "uri" (read mledger nft-id ['uri] ))
     )
 
     (defun get-price ()
@@ -317,17 +317,12 @@
 
     (defun get-owner (nft-id:string)
         @doc "Returns the owner of a particular nft"
-        (at "owner-address" (read nft-main-table nft-id ['owner-address] ))
-    )
-
-    (defun get-balance:decimal (id:string account:string)
-        @doc "Returns the number of NFTs owned by an account"
-        (at 'nfts-held (read mledger (key id account)))
+        (at "owner-address" (read mledger nft-id ['owner-address] ))
     )
 
     (defun get-all-owner-nfts (owner:string)
         @doc "Returns all nfts owned by one address"
-        (select nft-main-table ["id"] (where "owner-address" (= owner)))
+        (select mledger ["nft-id"] (where "owner-address" (= owner)))
     )
 
     (defun get-wl-members ()
@@ -335,18 +330,12 @@
         (keys wl)
     )
 
-    (defun id-for-new-account ()
-        ; determine the next id for created accounts
-        (int-to-str 10 (get-count ACCOUNTS_CREATED_COUNT))
-    )
-
     (defun id-for-new-nft ()
-        ; determine the next id for minting
+        @doc "returns the next NFT id"
         (int-to-str 10 (get-count MINERS_CREATED_COUNT))
     )
 )
 
-(create-table nft-main-table)
 (create-table wl)
 (create-table counts-table)
 (create-table price-table)
